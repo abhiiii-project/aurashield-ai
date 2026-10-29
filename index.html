@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AURA-SHIELD AI | Fake Identity & Document Screening System</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top System Header -->
+  <header class="app-header">
+    <div class="brand-wrapper">
+      <div class="brand-logo-glow">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <circle cx="12" cy="11" r="3"/>
+          <line x1="12" y1="14" x2="12" y2="17"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">AURA-SHIELD AI <span style="font-size:0.65rem; color:#38bdf8; vertical-align:middle; border:1px solid #0284c7; padding:2px 6px; border-radius:4px;">v4.2-SENTINEL</span></div>
+        <div class="brand-subtitle">AI Biometric & Document Forensic Screening Suite</div>
+      </div>
+    </div>
+
+    <!-- Telemetry Status Bar -->
+    <div class="system-telemetry">
+      <div class="telemetry-item">
+        <span class="pulse-dot"></span>
+        <span class="mono">MODELS: ResNet-ID v3.8 | FaceNet-512 | MRZ-OCR</span>
+      </div>
+      <button id="toggleAudioBtn" class="btn btn-secondary btn-sm mono" style="font-size:0.75rem;">
+        🔊 Sound: ON
+      </button>
+    </div>
+
+    <!-- User Profile & Auth Trigger -->
+    <div class="user-controls" id="userControlsContainer">
+      <!-- Injected by app.js -->
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- Navigation Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; flex-wrap:wrap; gap:1rem;">
+      <nav class="app-nav">
+        <button class="nav-tab active" data-tab="screening">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Live Screening
+        </button>
+        <button class="nav-tab" data-tab="biometrics">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Biometric Face Studio
+        </button>
+        <button class="nav-tab" data-tab="forensic">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          MRZ & Cryptography
+        </button>
+        <button class="nav-tab" data-tab="queue">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Adjudication Queue
+        </button>
+        <button class="nav-tab" data-tab="analytics">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Threat Analytics
+        </button>
+      </nav>
+
+      <div style="display:flex; gap:0.5rem;">
+        <button id="openCameraBtn" class="btn btn-secondary btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Live Probe Camera
+        </button>
+        <button id="exportJsonReportBtn" class="btn btn-secondary btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export Dossier (JSON)
+        </button>
+        <button id="printDossierBtn" class="btn btn-secondary btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Print Dossier
+        </button>
+      </div>
+    </div>
+
+    <!-- Preset Test Specimen Ribbon -->
+    <section class="glass-panel specimen-ribbon">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="font-size:0.95rem; font-weight:800; color:var(--text-main);">
+            ⚡ INTERACTIVE TEST SPECIMENS (1-CLICK LOAD)
+          </h3>
+          <p style="font-size:0.75rem; color:var(--text-muted);">
+            Select any pre-configured specimen below to inspect real-time AI tamper detection, MRZ modulo validation, and synthetic artifacts.
+          </p>
+        </div>
+        <span class="mono" style="font-size:0.72rem; color:var(--color-cyan); background:rgba(56,189,248,0.1); padding:4px 8px; border-radius:6px; border:1px solid rgba(56,189,248,0.3);">
+          AUTO-SYNTHESIZED FORENSIC DATA
+        </span>
+      </div>
+      <div class="specimen-cards-grid" id="specimenCardsContainer">
+        <!-- Injected by app.js -->
+      </div>
+    </section>
+
+    <!-- TAB 1: LIVE SCREENING & SCANNER (DEFAULT VIEW) -->
+    <div id="view-screening" class="tab-view-section">
+      <div class="screening-grid">
+        
+        <!-- Left Column: Document Canvas & Interactive Filters -->
+        <div>
+          <div class="glass-panel viewer-stage">
+            <div class="stage-toolbar">
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="font-weight:700; font-size:0.85rem; color:var(--text-main);">FORENSIC LENS:</span>
+                <div class="stage-mode-selector">
+                  <button class="stage-mode-btn active" data-filter="NORMAL">RGB Normal</button>
+                  <button class="stage-mode-btn" data-filter="ELA" title="Error Level Analysis to highlight compression discrepancies">ELA Tamper</button>
+                  <button class="stage-mode-btn" data-filter="UV" title="365nm Ultraviolet Fluorescent Security Simulation">UV Luminescence</button>
+                  <button class="stage-mode-btn" data-filter="EDGE" title="High-Pass Frequency Edge Detector">Edge Density</button>
+                  <button class="stage-mode-btn" data-filter="HEATMAP" title="Pixel Manipulation Probability Heatmap">Tamper Heatmap</button>
+                </div>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <button id="toggleZoomBtn" class="btn btn-secondary btn-sm" title="Toggle Magnifier Loupe">
+                  🔍 3x Magnifier
+                </button>
+              </div>
+            </div>
+
+            <!-- Canvas Stage Box -->
+            <div class="doc-canvas-box" id="docCanvasStage">
+              <div class="scan-line" id="scannerLaserLine"></div>
+              <div class="magnifier-lens" id="magnifierLens"></div>
+              <!-- Document SVG or Upload Rendered Here -->
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.75rem; color:var(--text-muted);">
+              <span>💡 Hover cursor over document with Magnifier enabled to inspect micro-typography and guilloche vectors.</span>
+              <span class="mono">STATUS: 24-BIT HIGH RESOLUTION STREAM</span>
+            </div>
+          </div>
+
+          <!-- Real-Time AI 7-Stage Pipeline HUD -->
+          <div class="glass-panel scan-pipeline-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h4 style="font-size:0.9rem; font-weight:700;">AI MULTI-STAGE SCREENING ENGINE</h4>
+                <div style="font-size:0.75rem; color:var(--text-muted);">Executes neural document rectification, MRZ modulo, and biometric liveness</div>
+              </div>
+              <button id="runScanBtn" class="btn btn-primary">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                EXECUTE AI SCREENING
+              </button>
+            </div>
+
+            <div class="pipeline-steps">
+              <div class="pipeline-step" id="pipeStep1">
+                <span>Stage 1: Document Classification & Edge Rectification</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep2">
+                <span>Stage 2: OCR Optical Character Extraction & MRZ Modulo Check</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep3">
+                <span>Stage 3: Error Level Analysis (ELA) & Compression Splicing</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep4">
+                <span>Stage 4: Microprint & Guilloche Waveform Consistency</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep5">
+                <span>Stage 5: Biometric FaceNet-512 Vector Embedding</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep6">
+                <span>Stage 6: 3D Depth & Presentation Attack (PAD) Liveness</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+              <div class="pipeline-step" id="pipeStep7">
+                <span>Stage 7: Global Sanctions & Fraud Risk Scoring Engine</span>
+                <span class="mono" style="color:var(--text-muted);">READY</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Document Upload Dropzone -->
+          <div style="margin-top:1.25rem;">
+            <div class="dropzone" id="uploadDropzone">
+              <input type="file" id="docFileInput" accept="image/*,.pdf" style="display:none;">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" style="margin-bottom:0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div style="font-weight:700; font-size:0.9rem;">Upload Custom Identity Document (Passport / DL / National ID)</div>
+              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">Drag & drop image here or click to browse (PNG, JPG, SVG)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Verdict, Risk Dial & Fraud Signals Dossier -->
+        <div class="analysis-sidebar">
+          
+          <!-- Verdict Dial Card -->
+          <div class="glass-panel verdict-box">
+            <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">
+              COMPOSITE FRAUD RISK INDEX
+            </div>
+            <div class="risk-dial-wrapper">
+              <div class="risk-score-big" id="riskScoreValue">--%</div>
+            </div>
+            <div>
+              <span id="riskCategoryBadge" class="badge badge-critical">AWAITING EVALUATION</span>
+            </div>
+            <div class="verdict-title" id="recommendedActionText" style="margin-top:0.75rem;">
+              RECOMMENDED DECISION: --
+            </div>
+            <p class="verdict-desc">
+              AI forensic heuristics combine optical character validation, ELA compression analysis, and biometric vector distance.
+            </p>
+
+            <!-- Manual Adjudication Action Bar -->
+            <div class="action-decision-bar">
+              <button id="btnDecideApprove" class="btn btn-success">
+                ✓ Pass
+              </button>
+              <button id="btnDecideReview" class="btn btn-secondary">
+                ⚠️ Review
+              </button>
+              <button id="btnDecideReject" class="btn btn-danger">
+                🚫 Reject (SIU)
+              </button>
+            </div>
+          </div>
+
+          <!-- Fraud Signals Dossier -->
+          <div class="glass-panel" style="padding:1.25rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h4 style="font-size:0.9rem; font-weight:700;">DETECTED FRAUD SIGNALS</h4>
+              <span class="mono" style="font-size:0.7rem; color:var(--text-muted);">ICAO & FIDO COMPLIANT</span>
+            </div>
+            <div class="fraud-signals-list" id="fraudSignalsList">
+              <!-- Injected by app.js -->
+            </div>
+          </div>
+
+          <!-- Quick Biometric Glance -->
+          <div class="glass-panel" style="padding:1.25rem;">
+            <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.5rem;">BIOMETRIC RECONCILIATION SUMMARY</h4>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; text-align:center;">
+              <div style="padding:0.65rem; background:rgba(2,6,23,0.5); border-radius:8px; border:1px solid #334155;">
+                <div style="font-size:0.7rem; color:var(--text-muted);">Face Similarity</div>
+                <div class="mono" id="bioSimilarityScore" style="font-size:1.25rem; font-weight:bold; color:var(--color-cyan);">--</div>
+              </div>
+              <div style="padding:0.65rem; background:rgba(2,6,23,0.5); border-radius:8px; border:1px solid #334155;">
+                <div style="font-size:0.7rem; color:var(--text-muted);">Liveness Confidence</div>
+                <div class="mono" id="bioLivenessScore" style="font-size:1.25rem; font-weight:bold; color:var(--color-emerald);">--</div>
+              </div>
+            </div>
+            <div id="bioVerdictText" style="margin-top:0.75rem; font-size:0.8rem;"></div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB 2: BIOMETRIC FACE STUDIO -->
+    <div id="view-biometrics" class="tab-view-section" style="display:none;">
+      <div class="glass-panel" style="padding:1.5rem;">
+        <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:0.25rem;">
+          BIOMETRIC FACIAL MATCH & LIVENESS VERIFICATION STUDIO
+        </h3>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1.5rem;">
+          Comparing extracted photo from identity credential against live capture probe using 512-dimensional FaceNet embeddings and 3D mesh liveness checks.
+        </p>
+
+        <div class="biometric-split-view">
+          <div class="bio-card">
+            <span class="badge badge-medium">SOURCE A: DOCUMENT EMBEDDED PHOTO</span>
+            <div class="bio-preview-box" id="bioDocPhotoBox">
+              <!-- Injected by app.js -->
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted);">
+              Extracted from VIZ (Visual Inspection Zone)
+            </div>
+          </div>
+
+          <div class="bio-card">
+            <span class="badge badge-pass">SOURCE B: LIVE SELFIE PROBE</span>
+            <div class="bio-preview-box" id="bioProbePhotoBox">
+              <!-- Injected by app.js -->
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted);">
+              Captured via HD Optical Sensor / Webcam
+            </div>
+          </div>
+        </div>
+
+        <!-- Biometric Telemetry Matrix -->
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; margin-top:1.5rem;">
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Cosine Distance</div>
+            <div class="mono" style="font-size:1.5rem; font-weight:800; color:var(--color-cyan); margin:0.25rem 0;">0.248</div>
+            <div style="font-size:0.7rem; color:var(--text-dim);">Threshold: &lt; 0.42 required for positive verification</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Deepfake / GAN Score</div>
+            <div class="mono" id="bioDeepfakeScore" style="font-size:1.5rem; font-weight:800; color:var(--color-rose); margin:0.25rem 0;">--%</div>
+            <div style="font-size:0.7rem; color:var(--text-dim);">Spectral Fourier frequency domain check</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Pulse Photoplethysmography (rPPG)</div>
+            <div class="mono" style="font-size:1.5rem; font-weight:800; color:var(--color-emerald); margin:0.25rem 0;">72 BPM</div>
+            <div style="font-size:0.7rem; color:var(--text-dim);">Micro-vascular blood flow absorption detected</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Gaze & Blink Micro-Dynamics</div>
+            <div class="mono" style="font-size:1.5rem; font-weight:800; color:var(--color-emerald); margin:0.25rem 0;">99.4%</div>
+            <div style="font-size:0.7rem; color:var(--text-dim);">Natural corneal reflection variance confirmed</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: MRZ & CRYPTOGRAPHY -->
+    <div id="view-forensic" class="tab-view-section" style="display:none;">
+      <div class="glass-panel mrz-card">
+        <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:0.25rem;">
+          MACHINE READABLE ZONE (MRZ) & ICAO DOC 9303 PARSER
+        </h3>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+          The MRZ contains encoded holder data with interleaved modulo 10 weighting check digits (weights: 7, 3, 1, 7, 3, 1...). Tampered characters break the cryptographic checksum.
+        </p>
+
+        <div id="mrzLinesContainer">
+          <!-- Injected by app.js -->
+        </div>
+
+        <div id="mrzValidationBreakdown">
+          <!-- Injected by app.js -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: ADJUDICATION QUEUE & AUDIT -->
+    <div id="view-queue" class="tab-view-section" style="display:none;">
+      <div class="glass-panel" style="padding:1.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h3 style="font-size:1.15rem; font-weight:800;">VERIFICATION ADJUDICATION QUEUE</h3>
+            <p style="font-size:0.8rem; color:var(--text-muted);">Live stream of screened identities, automated verdicts, and audit logs.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="window.print()">
+            Print Queue Summary
+          </button>
+        </div>
+
+        <div class="data-table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Audit ID</th>
+                <th>Timestamp</th>
+                <th>Subject & Document</th>
+                <th>Type</th>
+                <th>Risk Score</th>
+                <th>Decision Status</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody">
+              <!-- Injected by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: THREAT ANALYTICS -->
+    <div id="view-analytics" class="tab-view-section" style="display:none;">
+      <div class="glass-panel" style="padding:1.5rem;">
+        <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:1rem;">
+          FRAUD THREAT INTELLIGENCE & METRICS
+        </h3>
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Total Screened Today</div>
+            <div class="mono" style="font-size:2rem; font-weight:800; color:#ffffff;">1,482</div>
+            <div style="font-size:0.75rem; color:var(--color-emerald);">↑ 14% vs yesterday</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Detected Fake ID Rate</div>
+            <div class="mono" style="font-size:2rem; font-weight:800; color:var(--color-rose);">4.8%</div>
+            <div style="font-size:0.75rem; color:var(--color-rose);">71 forged documents intercepted</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">Avg. Processing Latency</div>
+            <div class="mono" style="font-size:2rem; font-weight:800; color:var(--color-cyan);">1.18s</div>
+            <div style="font-size:0.75rem; color:var(--color-emerald);">Sub-second edge inference</div>
+          </div>
+          <div class="glass-panel" style="padding:1rem;">
+            <div style="font-size:0.75rem; color:var(--text-muted);">False Positive Rate</div>
+            <div class="mono" style="font-size:2rem; font-weight:800; color:var(--color-emerald);">0.29%</div>
+            <div style="font-size:0.75rem; color:var(--color-emerald);">ISO/IEC 30107-3 compliant</div>
+          </div>
+        </div>
+
+        <div class="glass-panel" style="padding:1.25rem;">
+          <h4 style="font-size:0.95rem; font-weight:700; margin-bottom:0.75rem;">TOP IDENTIFIED FRAUD VECTORS</h4>
+          <div style="display:flex; flex-direction:column; gap:0.75rem;">
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.25rem;">
+                <span>Digital Photo Splice & Portrait Swap</span>
+                <span class="mono" style="font-weight:bold;">42%</span>
+              </div>
+              <div style="height:8px; background:#1e293b; border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:42%; background:var(--color-rose);"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.25rem;">
+                <span>MRZ Modulo Checksum Inconsistency</span>
+                <span class="mono" style="font-weight:bold;">28%</span>
+              </div>
+              <div style="height:8px; background:#1e293b; border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:28%; background:#f97316;"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.25rem;">
+                <span>Synthetic GAN / Deepfake Diffusion Faces</span>
+                <span class="mono" style="font-weight:bold;">19%</span>
+              </div>
+              <div style="height:8px; background:#1e293b; border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:19%; background:var(--color-purple);"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.25rem;">
+                <span>Expired Credentials & Altered Font Typo</span>
+                <span class="mono" style="font-weight:bold;">11%</span>
+              </div>
+              <div style="height:8px; background:#1e293b; border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:11%; background:var(--color-amber);"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- AUTHENTICATION MODAL (SIGN IN / SIGN UP) -->
+  <div class="modal-overlay" id="authModal">
+    <div class="auth-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <div class="brand-logo-glow" style="width:32px; height:32px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <span style="font-weight:800; font-size:1.05rem;">SECURE AUTHENTICATION</span>
+        </div>
+        <button id="closeAuthModalBtn" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1.25rem;">×</button>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem;">
+        <button id="tabAuthSignin" class="btn btn-secondary active" style="flex:1;">Sign In</button>
+        <button id="tabAuthSignup" class="btn btn-secondary" style="flex:1;">Create Account</button>
+      </div>
+
+      <!-- SIGN IN FORM -->
+      <div id="authSigninSection">
+        <form id="signinForm">
+          <div class="form-group">
+            <label class="form-label">Official Work Email / Agent ID</label>
+            <input type="email" id="signinEmail" class="form-input" placeholder="officer@agency.gov" required value="e.vance@aurashield.gov">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Workstation Security Passphrase</label>
+            <input type="password" id="signinPass" class="form-input" placeholder="••••••••••••" required value="SentinelSecure2026!">
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; margin-bottom:1rem; color:var(--text-muted);">
+            <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+              <input type="checkbox" checked> Remember this terminal
+            </label>
+            <a href="#" style="color:var(--color-cyan); text-decoration:none;" onclick="alert('Demo Mode: Use the 1-Click Demo Logins below!')">Reset Key?</a>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; padding:0.75rem;">
+            Authenticate Terminal Session
+          </button>
+        </form>
+
+        <!-- 1-Click Demo Profiles -->
+        <div style="margin-top:1.5rem; border-top:1px solid #334155; padding-top:1rem;">
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:0.6rem; text-align:center; font-weight:700;">
+            ⚡ QUICK 1-CLICK DEMO CLEARANCE ACCESS:
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            <button class="btn btn-secondary demo-login-btn" data-demo-role="analyst" style="justify-content:flex-start; text-align:left;">
+              <span style="font-size:1.1rem;">🕵️</span>
+              <div>
+                <div style="font-weight:700; font-size:0.8rem;">Dr. Elena Vance (Lead SIU Investigator)</div>
+                <div style="font-size:0.68rem; color:var(--color-cyan);">Interpol Cyber & Identity Fraud Taskforce</div>
+              </div>
+            </button>
+            <button class="btn btn-secondary demo-login-btn" data-demo-role="compliance" style="justify-content:flex-start; text-align:left;">
+              <span style="font-size:1.1rem;">🏦</span>
+              <div>
+                <div style="font-weight:700; font-size:0.8rem;">Marcus Brody (KYC Compliance Officer)</div>
+                <div style="font-size:0.68rem; color:var(--color-amber);">Global Fintech Risk Management</div>
+              </div>
+            </button>
+            <button class="btn btn-secondary demo-login-btn" data-demo-role="auditor" style="justify-content:flex-start; text-align:left;">
+              <span style="font-size:1.1rem;">⚖️</span>
+              <div>
+                <div style="font-weight:700; font-size:0.8rem;">Sarah Chen (Regulatory Auditor)</div>
+                <div style="font-size:0.68rem; color:var(--color-emerald);">EU Digital Identity Trust Authority</div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SIGN UP FORM -->
+      <div id="authSignupSection" style="display:none;">
+        <form id="signupForm">
+          <div class="form-group">
+            <label class="form-label">Full Name & Rank</label>
+            <input type="text" id="signupName" class="form-input" placeholder="e.g. Agent John Mercer" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Organization / Agency</label>
+            <input type="text" id="signupOrg" class="form-input" placeholder="e.g. Federal Border Control / NeoBank Risk" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Work Email</label>
+            <input type="email" id="signupEmail" class="form-input" placeholder="j.mercer@border.gov" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Assigned Role</label>
+            <select id="signupRole" class="form-select">
+              <option value="Senior Forensic Examiner">Senior Forensic Examiner</option>
+              <option value="AML/KYC Compliance Specialist">AML/KYC Compliance Specialist</option>
+              <option value="Border Security Officer">Border Security Officer</option>
+              <option value="Fintech Fraud Analyst">Fintech Fraud Analyst</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Passphrase</label>
+            <input type="password" id="signupPass" class="form-input" placeholder="At least 8 chars with uppercase, number, symbol" required>
+            <div class="strength-meter-bar">
+              <div class="strength-meter-fill" id="passStrengthBar"></div>
+            </div>
+          </div>
+          <div style="margin-bottom:1rem; font-size:0.75rem; color:var(--text-muted);">
+            <label style="display:flex; align-items:flex-start; gap:0.4rem; cursor:pointer;">
+              <input type="checkbox" required style="margin-top:2px;">
+              <span>I acknowledge that all biometric scans are governed by GDPR / CCPA and ISO/IEC 19794 compliance standards.</span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; padding:0.75rem;">
+            Create Officer Credentials
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- LIVE WEBCAM CAPTURE MODAL -->
+  <div class="modal-overlay" id="cameraModal">
+    <div class="auth-card" style="max-width:540px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h4 style="font-weight:700;">LIVE PROBE WEBCAM SCANNER</h4>
+        <button id="closeCamModalBtn" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1.25rem;">×</button>
+      </div>
+      <div class="camera-box">
+        <video id="webcamVideo" autoplay playsinline></video>
+      </div>
+      <div style="display:flex; gap:0.75rem;">
+        <button id="captureSnapBtn" class="btn btn-primary" style="flex:1;">
+          📸 Capture Probe Photo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Script Loaders -->
+  <script src="samples.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
