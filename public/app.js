@@ -613,9 +613,9 @@
               const r = spec.stageResults;
               switch (currentStepIdx) {
                 case 0: outcome = r.classified ? 'pass' : 'flag'; break;
-                case 1: outcome = (r.sampleWord || r.mixedDocTypes || (r.aadhaarFound && !r.aadhaarValid) || r.issuerMissing) ? 'flag' : (!r.aadhaarFound ? 'na' : 'pass'); break;
-                case 2: outcome = r.elaFlag ? 'flag' : 'pass'; break;
-                case 3: outcome = r.synthetic ? 'flag' : (r.lowRes ? 'na' : 'pass'); break;
+                case 1: outcome = r.qrVerified ? 'pass' : (r.qrSig === 'invalid' || r.qrMismatch || r.qrKind === 'unreadable') ? 'flag' : (r.sampleWord || r.mixedDocTypes || (r.aadhaarFound && !r.aadhaarValid) || r.issuerMissing) ? 'flag' : (!r.aadhaarFound ? 'na' : 'pass'); break;
+                case 2: outcome = r.qrVerified ? 'pass' : (r.elaFlag ? 'flag' : 'pass'); break;
+                case 3: outcome = r.qrVerified ? 'pass' : (r.synthetic ? 'flag' : (r.lowRes ? 'na' : 'pass')); break;
                 case 4: outcome = 'na'; break; // needs face model + live selfie
                 case 5: outcome = 'na'; break; // needs live capture
                 default: outcome = spec.recommendedAction === 'PASS' ? 'pass' : 'flag';
@@ -755,6 +755,38 @@
   function setupUploadAndWebcam() {
     const uploadInput = document.getElementById('docFileInput');
     const dropzone = document.getElementById('uploadDropzone');
+
+    // Optional UIDAI certificate for verifying Aadhaar Secure QR signatures
+    const certBtn = document.getElementById('uidaiCertBtn');
+    const certInput = document.getElementById('uidaiCertInput');
+    const certStatus = document.getElementById('uidaiCertStatus');
+    if (certBtn && certInput) {
+      try {
+        if (localStorage.getItem('uidaiCertPem') && certStatus) certStatus.textContent = 'UIDAI certificate loaded (saved in this browser)';
+      } catch (e) { /* storage unavailable */ }
+      certBtn.addEventListener('click', () => certInput.click());
+      certInput.addEventListener('change', async (ev) => {
+        const f = ev.target.files[0];
+        if (!f) return;
+        try {
+          const buf = new Uint8Array(await f.arrayBuffer());
+          let pem = new TextDecoder().decode(buf);
+          if (!pem.includes('BEGIN CERTIFICATE')) {
+            let bin = '';
+            buf.forEach(b => { bin += String.fromCharCode(b); });
+            pem = '-----BEGIN CERTIFICATE-----\n' + btoa(bin).match(/.{1,64}/g).join('\n') + '\n-----END CERTIFICATE-----';
+          }
+          window.AadhaarQR._extractSpki(window.AadhaarQR._pemToDer(pem)); // throws if not a certificate
+          state.uidaiCertPem = pem;
+          try { localStorage.setItem('uidaiCertPem', pem); } catch (e2) { /* ignore */ }
+          if (certStatus) certStatus.textContent = 'UIDAI certificate loaded: ' + f.name;
+          showToast('UIDAI certificate loaded. Re-upload the document to verify its QR signature.', 'success');
+        } catch (err) {
+          showToast('That file is not a valid X.509 certificate.', 'error');
+        }
+        certInput.value = '';
+      });
+    }
 
     if (dropzone && uploadInput) {
       dropzone.addEventListener('click', () => uploadInput.click());
@@ -973,6 +1005,115 @@
     return { text, candidates: matches };
   }
 
+  // ---- Aadhaar QR scanning (jsQR loaded on demand) ----
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+      s.onload = () => resolve(window.jsQR);
+      s.onerror = () => reject(new Error('jsQR load failed'));
+      document.head.appendChild(s);
+    });
+  }
+
+  // Try the whole image first, then zoomed-in regions (the QR is small on a card)
+  async function scanForQrText(dataUrl) {
+    const jsQR = await loadJsQR();
+    const img = await loadImage(dataUrl);
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const regions = [[0,0,1,1],[0.5,0.5,0.5,0.5],[0,0.5,0.5,0.5],[0.5,0,0.5,0.5],[0,0,0.5,0.5],[0.25,0.25,0.5,0.5],[0.5,0.25,0.5,0.75],[0,0.25,0.5,0.75]];
+    const found = [];
+    for (const [rx, ry, rw, rh] of regions) {
+      const sx = Math.floor(W * rx), sy = Math.floor(H * ry);
+      const sw = Math.floor(W * rw), sh = Math.floor(H * rh);
+      for (const targetW of [1600, 900]) {
+        const scale = targetW / sw;
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(sw * scale));
+        c.height = Math.max(1, Math.round(sh * scale));
+        if (c.width * c.height > 9e6) continue;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        const data = ctx.getImageData(0, 0, c.width, c.height);
+        const code = jsQR(data.data, c.width, c.height, { inversionAttempts: 'attemptBoth' });
+        if (code && code.data) {
+          found.push(code.data);
+          if (window.AadhaarQR.classifyQrText(code.data)) return found;
+        }
+      }
+    }
+    return found;
+  }
+
+  async function loadUidaiCert() {
+    if (state.uidaiCertPem) return state.uidaiCertPem;
+    try {
+      const saved = localStorage.getItem('uidaiCertPem');
+      if (saved) { state.uidaiCertPem = saved; return saved; }
+    } catch (e) { /* storage unavailable */ }
+    try {
+      const res = await fetch('uidai_cert.pem', { cache: 'no-store' });
+      if (res.ok) {
+        const txt = await res.text();
+        if (txt.includes('BEGIN CERTIFICATE')) { state.uidaiCertPem = txt; return txt; }
+      }
+    } catch (e) { /* no bundled certificate */ }
+    return null;
+  }
+
+  async function analyzeQr(r, spec, dataUrl, ocrText, ocrNumber) {
+    r.qrKind = null; r.qrSig = null; r.qrMismatch = false; r.qrVerified = false; r.qrConsistent = false;
+    let texts = [];
+    try { texts = await scanForQrText(dataUrl); } catch (e) { return; }
+    const text = texts.find(t => window.AadhaarQR.classifyQrText(t));
+    if (!text) { r.qrKind = texts.length ? 'other' : null; return; }
+
+    const kind = window.AadhaarQR.classifyQrText(text);
+    let parsed;
+    try {
+      parsed = kind === 'secure' ? await window.AadhaarQR.parseSecureQr(text) : window.AadhaarQR.parseXmlQr(text);
+    } catch (e) {
+      r.qrKind = 'unreadable';
+      r.qrError = e.message;
+      return;
+    }
+    r.qrKind = kind;
+    r.qrParsed = { name: parsed.name, dob: parsed.dob, gender: parsed.gender, last4: parsed.last4, state: parsed.state, pincode: parsed.pincode };
+
+    r.qrCross = window.AadhaarQR.crossCheck(parsed, ocrText, ocrNumber);
+    const mism = [];
+    if (r.qrCross.last4Match === false) mism.push('Aadhaar number');
+    if (r.qrCross.nameMatch === false) mism.push('name');
+    if (r.qrCross.dobMatch === false) mism.push('date of birth');
+    r.qrMismatchFields = mism;
+    r.qrMismatch = mism.length > 0;
+
+    if (kind === 'secure') {
+      const cert = await loadUidaiCert();
+      if (!cert) {
+        r.qrSig = 'unverified';
+      } else {
+        try {
+          r.qrSig = (await window.AadhaarQR.verifySignature(parsed, cert)) ? 'verified' : 'invalid';
+        } catch (e) {
+          r.qrSig = 'unverified';
+          r.qrError = 'Certificate could not be used: ' + e.message;
+        }
+      }
+    } else {
+      r.qrSig = 'unsigned';
+    }
+    r.qrVerified = r.qrSig === 'verified' && !r.qrMismatch;
+    r.qrConsistent = !r.qrMismatch && (r.qrSig === 'verified' || r.qrSig === 'unverified');
+
+    // Use the signed data for the holder details shown in the UI
+    spec.holderName = parsed.name.toUpperCase();
+    if (parsed.dob) spec.dob = parsed.dob;
+    if (parsed.gender) spec.sex = parsed.gender;
+  }
+
   // Text-based evidence pulled from the OCR output
   const SAMPLE_WORDS = /\b(sample|specimen|demo|dummy|fake|void|test card|not valid|for testing|mock)\b/i;
   const ISSUER_WORDS = /(government\s+of\s+india|unique\s+identification|uidai|aadhaar|aadhar|\u0906\u0927\u093e\u0930)/i;
@@ -992,6 +1133,26 @@
       return;
     }
 
+    // A UIDAI-signed QR that matches the printed card is the strongest proof available here.
+    if (r.qrVerified) {
+      spec.fraudSignals = [];
+      spec.riskScore = 2;
+      spec.riskCategory = 'LOW';
+      spec.recommendedAction = 'PASS';
+      return;
+    }
+    if (r.qrSig === 'invalid') {
+      risk += 90;
+      signals.push({ code: 'QR_SIGNATURE_INVALID', title: 'UIDAI Digital Signature Invalid', severity: 'CRITICAL', detail: 'The Secure QR code does not carry a valid UIDAI signature. Its data was altered or it was not issued by UIDAI.' });
+    }
+    if (r.qrMismatch) {
+      risk += 55;
+      signals.push({ code: 'QR_DATA_MISMATCH', title: 'QR Data Does Not Match Printed Card', severity: 'HIGH', detail: 'The QR code and the printed text disagree on: ' + r.qrMismatchFields.join(', ') + '. This is common when a card has been edited, though poor OCR can also cause it.' });
+    }
+    if (r.qrKind === 'unreadable') {
+      risk += 40;
+      signals.push({ code: 'QR_UNREADABLE', title: 'Aadhaar QR Present but Not Decodable', severity: 'HIGH', detail: 'A QR code was found but it is not a valid Aadhaar Secure QR or XML payload (' + (r.qrError || 'unknown error') + ').' });
+    }
     if (r.sampleWord) {
       risk += 75;
       signals.push({ code: 'SAMPLE_MARKING', title: 'Sample / Demo Marking Detected', severity: 'CRITICAL', detail: 'The document contains wording such as "SAMPLE", "DEMO" or "SPECIMEN". It is not a genuine issued credential.' });
@@ -1054,8 +1215,10 @@
     renderVerdictDisplay();
 
     // OCR + text checks (slower, runs in the background)
+    let ocrTextForQr = '';
     try {
       const { text, candidates } = await extractIdNumbers(dataUrl);
+      ocrTextForQr = text;
       r.ocrOk = text.trim().length > 10;
       const valid = candidates.find(isValidAadhaarNumber);
       if (valid) {
@@ -1076,14 +1239,17 @@
       r.aadhaarFound = false;
       r.ocrOk = false;
     }
+    try { await analyzeQr(r, spec, dataUrl, ocrTextForQr, spec.documentNumber); } catch (e) { r.qrKind = null; }
     r.ocrDone = true;
+    const qrLine1 = r.qrParsed ? `QR (${r.qrKind}): ${r.qrParsed.name} | DOB ${r.qrParsed.dob || '-'} | XXXX XXXX ${r.qrParsed.last4}` : null;
+    const qrStatus = { verified: 'UIDAI signature VERIFIED', invalid: 'UIDAI signature INVALID', unverified: 'UIDAI signature NOT verified (load the UIDAI certificate)', unsigned: 'Legacy XML QR - unsigned, can be edited by anyone' }[r.qrSig];
     spec.mrz = {
-      line1: r.aadhaarFound ? 'N/A - Aadhaar cards have no MRZ' : 'N/A - no MRZ detected',
-      line2: r.aadhaarFound ? 'Verified with Verhoeff checksum on the 12-digit number instead' : '',
+      line1: qrLine1 || (r.aadhaarFound ? 'N/A - Aadhaar cards have no MRZ' : 'N/A - no MRZ detected'),
+      line2: qrStatus || (r.aadhaarFound ? 'Verified with Verhoeff checksum on the 12-digit number instead' : ''),
       docNumberLabel: r.aadhaarFound ? (r.aadhaarValid ? 'PASS (Verhoeff)' : 'CHECKSUM FAIL (Verhoeff)') : 'N/A',
-      docNumberValid: !r.aadhaarFound || r.aadhaarValid,
-      dobValid: true, expiryValid: true,
-      compositeValid: !r.aadhaarFound || r.aadhaarValid
+      docNumberValid: (!r.aadhaarFound || r.aadhaarValid) && r.qrCross?.last4Match !== false,
+      dobValid: r.qrCross?.dobMatch !== false, expiryValid: true,
+      compositeValid: ((!r.aadhaarFound || r.aadhaarValid) && !r.qrMismatch) && r.qrSig !== 'invalid'
     };
     applyScoring(spec);
     spec.analysisPromise = null;
