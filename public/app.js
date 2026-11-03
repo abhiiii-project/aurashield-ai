@@ -613,7 +613,7 @@
               const r = spec.stageResults;
               switch (currentStepIdx) {
                 case 0: outcome = r.classified ? 'pass' : 'flag'; break;
-                case 1: outcome = r.qrVerified ? 'pass' : (r.qrSig === 'invalid' || r.qrMismatch || r.qrKind === 'unreadable') ? 'flag' : (r.sampleWord || r.mixedDocTypes || (r.aadhaarFound && !r.aadhaarValid) || r.issuerMissing) ? 'flag' : (!r.aadhaarFound ? 'na' : 'pass'); break;
+                case 1: outcome = r.qrVerified ? 'pass' : (r.qrSig === 'invalid' || r.qrMismatch || r.qrKind === 'unreadable') ? 'flag' : (r.sampleWord || r.mixedDocTypes || (r.aadhaarFound && !r.aadhaarValid)) ? 'flag' : (!r.aadhaarFound ? 'na' : 'pass'); break;
                 case 2: outcome = r.qrVerified ? 'pass' : (r.elaFlag ? 'flag' : 'pass'); break;
                 case 3: outcome = r.qrVerified ? 'pass' : (r.synthetic ? 'flag' : (r.lowRes ? 'na' : 'pass')); break;
                 case 4: outcome = 'na'; break; // needs face model + live selfie
@@ -995,14 +995,103 @@
       document.head.appendChild(s);
     });
   }
+  // Image preparation for OCR: crop a region, upscale, grayscale, stretch contrast,
+  // optionally invert (light text on dark) or binarize (adaptive threshold).
+  function prepForOcr(img, region, opts) {
+    const [rx, ry, rw, rh] = region;
+    const sx = Math.floor(img.naturalWidth * rx), sy = Math.floor(img.naturalHeight * ry);
+    const sw = Math.max(1, Math.floor(img.naturalWidth * rw)), sh = Math.max(1, Math.floor(img.naturalHeight * rh));
+    const scale = Math.min(3, Math.max(1, (opts.targetW || 1800) / sw));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(sw * scale));
+    c.height = Math.max(1, Math.round(sh * scale));
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const id = ctx.getImageData(0, 0, c.width, c.height);
+    const d = id.data, n = c.width * c.height;
+    const gray = new Uint8ClampedArray(n);
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) {
+      const g = (0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2]) | 0;
+      gray[i] = g; hist[g]++;
+    }
+    // stretch between the 2nd and 98th percentile
+    let acc = 0, lo = 0, hi = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.02) { lo = v; break; } }
+    acc = 0;
+    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= n * 0.02) { hi = v; break; } }
+    const span = Math.max(1, hi - lo);
+    for (let i = 0; i < n; i++) gray[i] = Math.max(0, Math.min(255, ((gray[i] - lo) * 255) / span));
+
+    let out = gray;
+    if (opts.bin) {
+      // adaptive (local mean) threshold via an integral image
+      const w = c.width, h = c.height, r = Math.max(8, Math.round(w / 40));
+      const integ = new Float64Array((w + 1) * (h + 1));
+      for (let y = 0; y < h; y++) {
+        let row = 0;
+        for (let x = 0; x < w; x++) {
+          row += gray[y * w + x];
+          integ[(y + 1) * (w + 1) + (x + 1)] = integ[y * (w + 1) + (x + 1)] + row;
+        }
+      }
+      out = new Uint8ClampedArray(n);
+      for (let y = 0; y < h; y++) {
+        const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+        for (let x = 0; x < w; x++) {
+          const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+          const sum = integ[y1 * (w + 1) + x1] - integ[y0 * (w + 1) + x1] - integ[y1 * (w + 1) + x0] + integ[y0 * (w + 1) + x0];
+          const mean = sum / ((x1 - x0) * (y1 - y0));
+          out[y * w + x] = gray[y * w + x] < mean - 12 ? 0 : 255;
+        }
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const v = opts.invert ? 255 - out[i] : out[i];
+      d[i*4] = d[i*4+1] = d[i*4+2] = v; d[i*4+3] = 255;
+    }
+    ctx.putImageData(id, 0, 0);
+    return c;
+  }
+
+  // Several differently prepared OCR passes: whole card, inverted (light-on-dark headers),
+  // the header strip, and the lower strip where ID numbers are printed. Text is combined.
+  const OCR_PASSES = [
+    { region: [0, 0, 1, 1],      psm: '3'  },
+    { region: [0, 0, 1, 1],      psm: '3',  invert: true },
+    { region: [0, 0, 1, 0.28],   psm: '11' },
+    { region: [0, 0, 1, 0.28],   psm: '11', invert: true },
+    { region: [0, 0.55, 1, 0.40], psm: '6' },
+    { region: [0, 0.55, 1, 0.40], psm: '6', bin: true }
+  ];
+
   async function extractIdNumbers(dataUrl) {
     const T = await loadTesseract();
-    const run = T.recognize(dataUrl, 'eng');
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('OCR timeout')), 90000));
-    const { data } = await Promise.race([run, timeout]);
-    const text = data.text || '';
-    const matches = [...text.matchAll(/(?<!\d)(\d{4})\s*(\d{4})\s*(\d{4})(?!\d)/g)].map(m => m[1] + m[2] + m[3]);
-    return { text, candidates: matches };
+    const img = await loadImage(dataUrl);
+    const worker = await T.createWorker('eng');
+    const texts = [];
+    const deadline = Date.now() + 120000;
+    try {
+      for (const pass of OCR_PASSES) {
+        if (Date.now() > deadline) break;
+        try {
+          await worker.setParameters({ tessedit_pageseg_mode: pass.psm });
+          const canvas = prepForOcr(img, pass.region, pass);
+          const { data } = await worker.recognize(canvas);
+          if (data && data.text) texts.push(data.text);
+        } catch (e) { /* skip a failed pass, keep the others */ }
+      }
+    } finally {
+      try { await worker.terminate(); } catch (e) { /* ignore */ }
+    }
+    if (!texts.length) throw new Error('OCR produced no text');
+    const text = texts.join('\n');
+    const set = new Set();
+    texts.forEach(t => {
+      for (const m of t.matchAll(/(?<!\d)(\d{4})\s*(\d{4})\s*(\d{4})(?!\d)/g)) set.add(m[1] + m[2] + m[3]);
+    });
+    return { text, candidates: [...set] };
   }
 
   // ---- Aadhaar QR scanning (jsQR loaded on demand) ----
@@ -1114,11 +1203,6 @@
     if (parsed.gender) spec.sex = parsed.gender;
   }
 
-  // Text-based evidence pulled from the OCR output
-  const SAMPLE_WORDS = /\b(sample|specimen|demo|dummy|fake|void|test card|not valid|for testing|mock)\b/i;
-  const ISSUER_WORDS = /(government\s+of\s+india|unique\s+identification|uidai|aadhaar|aadhar|\u0906\u0927\u093e\u0930)/i;
-  const PAN_PATTERN = /\b[A-Z]{5}\s?[0-9]{4}\s?[A-Z]\b/;
-
   function applyScoring(spec) {
     const r = spec.stageResults;
     const signals = [];
@@ -1154,11 +1238,11 @@
       signals.push({ code: 'QR_UNREADABLE', title: 'Aadhaar QR Present but Not Decodable', severity: 'HIGH', detail: 'A QR code was found but it is not a valid Aadhaar Secure QR or XML payload (' + (r.qrError || 'unknown error') + ').' });
     }
     if (r.sampleWord) {
-      risk += 75;
+      risk += 90;
       signals.push({ code: 'SAMPLE_MARKING', title: 'Sample / Demo Marking Detected', severity: 'CRITICAL', detail: 'The document contains wording such as "SAMPLE", "DEMO" or "SPECIMEN". It is not a genuine issued credential.' });
     }
     if (r.mixedDocTypes) {
-      risk += 45;
+      risk += 85;
       signals.push({ code: 'MIXED_DOCUMENT_TYPES', title: 'Aadhaar and PAN Combined on One Card', severity: 'HIGH', detail: 'An Aadhaar number and a PAN number appear on the same document. No government-issued credential combines them.' });
     }
     if (r.aadhaarFound && !r.aadhaarValid) {
@@ -1166,11 +1250,11 @@
       signals.push({ code: 'AADHAAR_CHECKSUM_FAIL', title: 'Aadhaar Number Checksum Failed', severity: 'HIGH', detail: 'The 12-digit number read from the card does not satisfy the Verhoeff checksum. This can also be an OCR misread - re-upload a sharper image.' });
     }
     if (r.synthetic) {
-      risk += 35;
-      signals.push({ code: 'DIGITALLY_GENERATED', title: 'Digitally Generated Image (No Camera/Scan Noise)', severity: 'HIGH', detail: 'Large areas are perfectly flat colour with no sensor noise or paper texture. A photo or scan of a physical card does not look like this.' });
+      risk += 15;
+      signals.push({ code: 'DIGITALLY_GENERATED', title: 'Possibly Digitally Generated Image', severity: 'MEDIUM', detail: 'Large areas are perfectly flat colour with no sensor noise or paper texture. A photo or scan of a physical card does not look like this.' });
     }
     if (r.issuerMissing) {
-      risk += 25;
+      risk += 10;
       signals.push({ code: 'ISSUER_MARKINGS_MISSING', title: 'Issuer Markings Not Found', severity: 'MEDIUM', detail: 'Expected text such as "Government of India" / "Aadhaar" was not found on the document.' });
     }
     if (r.elaFlag) {
@@ -1184,9 +1268,11 @@
 
     // A PASS needs positive evidence, not just the absence of red flags.
     const evidence = [r.aadhaarFound && r.aadhaarValid, r.issuerFound, !r.synthetic, !r.lowRes].filter(Boolean).length;
-    if (signals.length === 0 && evidence < 4) {
-      risk = 35;
-      signals.push({ code: 'INSUFFICIENT_EVIDENCE', title: 'Not Enough Authenticity Evidence', severity: 'MEDIUM', detail: 'No clear forgery signs, but the card number, issuer text and image quality could not all be confirmed. Manual review required.' });
+    if (evidence < 4) {
+      if (signals.length === 0) {
+        signals.push({ code: 'INSUFFICIENT_EVIDENCE', title: 'Not Enough Authenticity Evidence', severity: 'MEDIUM', detail: 'No clear forgery signs, but the card number, issuer text and image quality could not all be confirmed. Manual review required.' });
+      }
+      risk = Math.max(risk, 35);
     }
     if (signals.length === 0) risk = 3;
 
@@ -1203,7 +1289,7 @@
       const small = drawScaled(img, 900);
       r.lowRes = img.naturalWidth < 500 || sharpnessScore(small) < 25;
       r.classified = img.naturalWidth >= 300 && img.naturalHeight >= 200;
-      r.synthetic = flatRatio(small) > 0.35;
+      r.synthetic = flatRatio(small) > 0.5;
       try {
         const ela = await elaAnalysis(small);
         r.elaFlag = ela.outlierRatio > 0.25;
@@ -1231,10 +1317,12 @@
       } else {
         r.aadhaarFound = false;
       }
-      r.sampleWord = SAMPLE_WORDS.test(text);
-      r.issuerFound = ISSUER_WORDS.test(text);
+      const DT = window.DocTextChecks;
+      r.sampleWord = !!DT.sampleMarking(text);
+      r.issuerFound = DT.issuerWording(text);
       r.issuerMissing = r.ocrOk && !r.issuerFound;
-      r.mixedDocTypes = r.aadhaarFound && PAN_PATTERN.test(text.toUpperCase());
+      const mentionsAadhaar = r.aadhaarFound || /aadh?aa?r/i.test(text);
+      r.mixedDocTypes = mentionsAadhaar && (!!DT.panNumber(text) || DT.panLabel(text));
     } catch (e) {
       r.aadhaarFound = false;
       r.ocrOk = false;
