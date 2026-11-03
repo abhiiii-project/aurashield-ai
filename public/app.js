@@ -613,12 +613,12 @@
               const r = spec.stageResults;
               switch (currentStepIdx) {
                 case 0: outcome = r.classified ? 'pass' : 'flag'; break;
-                case 1: outcome = !r.aadhaarFound ? 'na' : (r.aadhaarValid ? 'pass' : 'flag'); break;
+                case 1: outcome = (r.sampleWord || r.mixedDocTypes || (r.aadhaarFound && !r.aadhaarValid) || r.issuerMissing) ? 'flag' : (!r.aadhaarFound ? 'na' : 'pass'); break;
                 case 2: outcome = r.elaFlag ? 'flag' : 'pass'; break;
-                case 3: outcome = r.lowRes ? 'na' : 'pass'; break;
+                case 3: outcome = r.synthetic ? 'flag' : (r.lowRes ? 'na' : 'pass'); break;
                 case 4: outcome = 'na'; break; // needs face model + live selfie
                 case 5: outcome = 'na'; break; // needs live capture
-                default: outcome = spec.riskScore > 70 ? 'flag' : 'pass';
+                default: outcome = spec.recommendedAction === 'PASS' ? 'pass' : 'flag';
               }
             } else {
               // Pre-built demo specimens keep their scripted behaviour
@@ -893,6 +893,31 @@
     return sumSq / n - mean * mean;
   }
 
+  // Share of pixels sitting in perfectly flat 3x3 regions. Camera photos and scans carry
+  // sensor noise, so this stays low; digitally generated cards/mockups are mostly flat colour.
+  function flatRatio(canvas) {
+    const { width: w, height: h } = canvas;
+    const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+    let flat = 0, total = 0;
+    for (let y = 1; y < h - 1; y += 2) {
+      for (let x = 1; x < w - 1; x += 2) {
+        let mn = 255, mx = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const i = ((y + dy) * w + (x + dx)) * 4;
+            const v = d[i] + d[i+1] + d[i+2];
+            const m = v / 3;
+            if (m < mn) mn = m;
+            if (m > mx) mx = m;
+          }
+        }
+        if (mx - mn <= 1) flat++;
+        total++;
+      }
+    }
+    return total ? flat / total : 0;
+  }
+
   // Error Level Analysis: recompress at 90% and measure how unevenly blocks differ.
   // Genuine single-pass photos are fairly uniform; pasted regions stand out.
   async function elaAnalysis(canvas) {
@@ -948,13 +973,44 @@
     return { text, candidates: matches };
   }
 
+  // Text-based evidence pulled from the OCR output
+  const SAMPLE_WORDS = /\b(sample|specimen|demo|dummy|fake|void|test card|not valid|for testing|mock)\b/i;
+  const ISSUER_WORDS = /(government\s+of\s+india|unique\s+identification|uidai|aadhaar|aadhar|\u0906\u0927\u093e\u0930)/i;
+  const PAN_PATTERN = /\b[A-Z]{5}\s?[0-9]{4}\s?[A-Z]\b/;
+
   function applyScoring(spec) {
     const r = spec.stageResults;
-    let risk = 3;
     const signals = [];
+    let risk = 0;
+
+    if (!r.ocrDone) {
+      // Text analysis still running: never show a clean PASS yet
+      spec.fraudSignals = [];
+      spec.riskScore = 35;
+      spec.riskCategory = 'MEDIUM';
+      spec.recommendedAction = 'REVIEW';
+      return;
+    }
+
+    if (r.sampleWord) {
+      risk += 75;
+      signals.push({ code: 'SAMPLE_MARKING', title: 'Sample / Demo Marking Detected', severity: 'CRITICAL', detail: 'The document contains wording such as "SAMPLE", "DEMO" or "SPECIMEN". It is not a genuine issued credential.' });
+    }
+    if (r.mixedDocTypes) {
+      risk += 45;
+      signals.push({ code: 'MIXED_DOCUMENT_TYPES', title: 'Aadhaar and PAN Combined on One Card', severity: 'HIGH', detail: 'An Aadhaar number and a PAN number appear on the same document. No government-issued credential combines them.' });
+    }
     if (r.aadhaarFound && !r.aadhaarValid) {
       risk += 60;
       signals.push({ code: 'AADHAAR_CHECKSUM_FAIL', title: 'Aadhaar Number Checksum Failed', severity: 'HIGH', detail: 'The 12-digit number read from the card does not satisfy the Verhoeff checksum. This can also be an OCR misread - re-upload a sharper image.' });
+    }
+    if (r.synthetic) {
+      risk += 35;
+      signals.push({ code: 'DIGITALLY_GENERATED', title: 'Digitally Generated Image (No Camera/Scan Noise)', severity: 'HIGH', detail: 'Large areas are perfectly flat colour with no sensor noise or paper texture. A photo or scan of a physical card does not look like this.' });
+    }
+    if (r.issuerMissing) {
+      risk += 25;
+      signals.push({ code: 'ISSUER_MARKINGS_MISSING', title: 'Issuer Markings Not Found', severity: 'MEDIUM', detail: 'Expected text such as "Government of India" / "Aadhaar" was not found on the document.' });
     }
     if (r.elaFlag) {
       risk += 20;
@@ -964,6 +1020,15 @@
       risk += 10;
       signals.push({ code: 'LOW_RESOLUTION', title: 'Low Resolution / Blurry Image', severity: 'MEDIUM', detail: 'The image is too small or blurry to inspect fine print reliably. Upload a sharper scan.' });
     }
+
+    // A PASS needs positive evidence, not just the absence of red flags.
+    const evidence = [r.aadhaarFound && r.aadhaarValid, r.issuerFound, !r.synthetic, !r.lowRes].filter(Boolean).length;
+    if (signals.length === 0 && evidence < 4) {
+      risk = 35;
+      signals.push({ code: 'INSUFFICIENT_EVIDENCE', title: 'Not Enough Authenticity Evidence', severity: 'MEDIUM', detail: 'No clear forgery signs, but the card number, issuer text and image quality could not all be confirmed. Manual review required.' });
+    }
+    if (signals.length === 0) risk = 3;
+
     spec.fraudSignals = signals;
     spec.riskScore = Math.min(99, risk);
     spec.riskCategory = spec.riskScore > 70 ? 'CRITICAL' : spec.riskScore > 45 ? 'HIGH' : spec.riskScore > 20 ? 'MEDIUM' : 'LOW';
@@ -977,6 +1042,7 @@
       const small = drawScaled(img, 900);
       r.lowRes = img.naturalWidth < 500 || sharpnessScore(small) < 25;
       r.classified = img.naturalWidth >= 300 && img.naturalHeight >= 200;
+      r.synthetic = flatRatio(small) > 0.35;
       try {
         const ela = await elaAnalysis(small);
         r.elaFlag = ela.outlierRatio > 0.25;
@@ -987,9 +1053,10 @@
     applyScoring(spec);
     renderVerdictDisplay();
 
-    // OCR + Aadhaar checksum (slower, runs in the background)
+    // OCR + text checks (slower, runs in the background)
     try {
-      const { candidates } = await extractIdNumbers(dataUrl);
+      const { text, candidates } = await extractIdNumbers(dataUrl);
+      r.ocrOk = text.trim().length > 10;
       const valid = candidates.find(isValidAadhaarNumber);
       if (valid) {
         r.aadhaarFound = true; r.aadhaarValid = true;
@@ -1001,9 +1068,15 @@
       } else {
         r.aadhaarFound = false;
       }
+      r.sampleWord = SAMPLE_WORDS.test(text);
+      r.issuerFound = ISSUER_WORDS.test(text);
+      r.issuerMissing = r.ocrOk && !r.issuerFound;
+      r.mixedDocTypes = r.aadhaarFound && PAN_PATTERN.test(text.toUpperCase());
     } catch (e) {
       r.aadhaarFound = false;
+      r.ocrOk = false;
     }
+    r.ocrDone = true;
     spec.mrz = {
       line1: r.aadhaarFound ? 'N/A - Aadhaar cards have no MRZ' : 'N/A - no MRZ detected',
       line2: r.aadhaarFound ? 'Verified with Verhoeff checksum on the 12-digit number instead' : '',
