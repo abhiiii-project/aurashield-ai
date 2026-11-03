@@ -437,12 +437,14 @@
     }
 
     const bio = state.currentSpecimen.biometrics;
-    if (similarityMeter) similarityMeter.textContent = `${bio.similarity}%`;
-    if (livenessMeter) livenessMeter.textContent = `${bio.livenessScore}%`;
-    if (deepfakeMeter) deepfakeMeter.textContent = `${bio.deepfakeProbability}%`;
+    const fmtPct = v => (v === null || v === undefined) ? 'N/A' : `${v}%`;
+    if (similarityMeter) similarityMeter.textContent = fmtPct(bio.similarity);
+    if (livenessMeter) livenessMeter.textContent = fmtPct(bio.livenessScore);
+    if (deepfakeMeter) deepfakeMeter.textContent = fmtPct(bio.deepfakeProbability);
 
     if (bioVerdictText) {
-      const isPass = bio.similarity >= 80 && bio.livenessScore >= 75 && bio.deepfakeProbability < 30;
+      const notEvaluated = bio.similarity === null || bio.similarity === undefined;
+      const isPass = notEvaluated || (bio.similarity >= 80 && bio.livenessScore >= 75 && bio.deepfakeProbability < 30);
       bioVerdictText.innerHTML = `
         <div style="font-weight:bold; color:${isPass ? 'var(--color-emerald)' : 'var(--color-rose)'}">
           ${bio.verdict}
@@ -474,7 +476,7 @@
           <div style="padding:0.5rem; background:rgba(2,6,23,0.4); border-radius:6px; border:1px solid #334155;">
             <div style="font-size:0.7rem; color:var(--text-muted);">Doc No. Checksum</div>
             <div style="font-weight:bold; color:${m.docNumberValid ? 'var(--color-emerald)' : 'var(--color-rose)'}">
-              ${m.docNumberValid ? '✓ PASS (Modulo 10)' : '❌ CHECKSUM FAIL'}
+              ${m.docNumberLabel ? (m.docNumberValid ? '✓ ' : '❌ ') + m.docNumberLabel : (m.docNumberValid ? '✓ PASS (Modulo 10)' : '❌ CHECKSUM FAIL')}
             </div>
           </div>
           <div style="padding:0.5rem; background:rgba(2,6,23,0.4); border-radius:6px; border:1px solid #334155;">
@@ -567,6 +569,16 @@
     if (state.isScanning) return;
     state.isScanning = true;
 
+    // Uploaded documents: wait for the real analysis (OCR etc.) to finish first
+    if (state.currentSpecimen && state.currentSpecimen.analysisPromise) {
+      showToast('Finishing document analysis (OCR)... this can take a few seconds.', 'info');
+      state.currentSpecimen.analysisPromise.finally(() => {
+        state.isScanning = false;
+        startScreeningPipeline();
+      });
+      return;
+    }
+
     const scanLine = document.getElementById('scannerLaserLine');
     if (scanLine) scanLine.classList.add('active');
 
@@ -594,9 +606,29 @@
 
         setTimeout(() => {
           if (el) {
-            const hasError = state.currentSpecimen.riskScore > 50 && (currentStepIdx === 1 || currentStepIdx === 2 || currentStepIdx === 4 || currentStepIdx === 5);
-            el.className = hasError ? 'pipeline-step failed' : 'pipeline-step success';
-            el.innerHTML = `<span>${step.name}</span> <span class="mono" style="font-weight:bold; color:${hasError ? 'var(--color-rose)' : 'var(--color-emerald)'}">${hasError ? 'ANOMALY FLAGGED' : 'PASSED'}</span>`;
+            const spec = state.currentSpecimen;
+            let outcome; // 'pass' | 'flag' | 'na'
+            if (spec.stageResults) {
+              // Real results for uploaded documents
+              const r = spec.stageResults;
+              switch (currentStepIdx) {
+                case 0: outcome = r.classified ? 'pass' : 'flag'; break;
+                case 1: outcome = !r.aadhaarFound ? 'na' : (r.aadhaarValid ? 'pass' : 'flag'); break;
+                case 2: outcome = r.elaFlag ? 'flag' : 'pass'; break;
+                case 3: outcome = r.lowRes ? 'na' : 'pass'; break;
+                case 4: outcome = 'na'; break; // needs face model + live selfie
+                case 5: outcome = 'na'; break; // needs live capture
+                default: outcome = spec.riskScore > 70 ? 'flag' : 'pass';
+              }
+            } else {
+              // Pre-built demo specimens keep their scripted behaviour
+              const hasError = spec.riskScore > 50 && (currentStepIdx === 1 || currentStepIdx === 2 || currentStepIdx === 4 || currentStepIdx === 5);
+              outcome = hasError ? 'flag' : 'pass';
+            }
+            const label = outcome === 'flag' ? 'ANOMALY FLAGGED' : outcome === 'na' ? 'N/A' : 'PASSED';
+            const color = outcome === 'flag' ? 'var(--color-rose)' : outcome === 'na' ? 'var(--text-muted)' : 'var(--color-emerald)';
+            el.className = outcome === 'flag' ? 'pipeline-step failed' : outcome === 'na' ? 'pipeline-step' : 'pipeline-step success';
+            el.innerHTML = `<span>${step.name}</span> <span class="mono" style="font-weight:bold; color:${color}">${label}</span>`;
           }
           currentStepIdx++;
           playCyberSound('scan');
@@ -801,6 +833,192 @@
     }
   }
 
+  // ---------------------------------------------------------------
+  // Real upload analysis (replaces the old hardcoded "mock" result)
+  // ---------------------------------------------------------------
+
+  // Verhoeff checksum - the algorithm UIDAI uses for the 12-digit Aadhaar number
+  const VERHOEFF_D = [
+    [0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],[3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],
+    [5,9,8,7,6,0,4,3,2,1],[6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],[9,8,7,6,5,4,3,2,1,0]
+  ];
+  const VERHOEFF_P = [
+    [0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],[8,9,1,6,0,4,3,5,2,7],
+    [9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],[2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]
+  ];
+  function verhoeffValid(numStr) {
+    if (!/^\d+$/.test(numStr)) return false;
+    let c = 0;
+    const digits = numStr.split('').reverse().map(Number);
+    for (let i = 0; i < digits.length; i++) c = VERHOEFF_D[c][VERHOEFF_P[i % 8][digits[i]]];
+    return c === 0;
+  }
+  function isValidAadhaarNumber(n) {
+    return /^[2-9]\d{11}$/.test(n) && verhoeffValid(n);
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function drawScaled(img, maxW) {
+    const scale = Math.min(1, maxW / img.naturalWidth);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  // Laplacian variance - low value means a blurry image
+  function sharpnessScore(canvas) {
+    const { width: w, height: h } = canvas;
+    const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) g[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+    let sum = 0, sumSq = 0, n = 0;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        const lap = 4 * g[i] - g[i-1] - g[i+1] - g[i-w] - g[i+w];
+        sum += lap; sumSq += lap * lap; n++;
+      }
+    }
+    const mean = sum / n;
+    return sumSq / n - mean * mean;
+  }
+
+  // Error Level Analysis: recompress at 90% and measure how unevenly blocks differ.
+  // Genuine single-pass photos are fairly uniform; pasted regions stand out.
+  async function elaAnalysis(canvas) {
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
+    const url = URL.createObjectURL(blob);
+    const re = await loadImage(url);
+    URL.revokeObjectURL(url);
+    const c2 = document.createElement('canvas');
+    c2.width = canvas.width; c2.height = canvas.height;
+    c2.getContext('2d').drawImage(re, 0, 0);
+    const a = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const b = c2.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const B = 16, bw = Math.floor(canvas.width / B), bh = Math.floor(canvas.height / B);
+    const means = [];
+    for (let by = 0; by < bh; by++) {
+      for (let bx = 0; bx < bw; bx++) {
+        let s = 0;
+        for (let y = 0; y < B; y++) {
+          for (let x = 0; x < B; x++) {
+            const i = ((by * B + y) * canvas.width + (bx * B + x)) * 4;
+            s += Math.abs(a[i] - b[i]) + Math.abs(a[i+1] - b[i+1]) + Math.abs(a[i+2] - b[i+2]);
+          }
+        }
+        means.push(s / (B * B * 3));
+      }
+    }
+    if (means.length < 20) return { outlierRatio: 0 };
+    const sorted = [...means].sort((x, y) => x - y);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const limit = Math.max(median * 4, 6);
+    const outliers = means.filter(m => m > limit).length;
+    return { outlierRatio: outliers / means.length };
+  }
+
+  // OCR via Tesseract.js (loaded on demand). Returns the Aadhaar number found, if any.
+  function loadTesseract() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+      s.onload = () => resolve(window.Tesseract);
+      s.onerror = () => reject(new Error('Tesseract load failed'));
+      document.head.appendChild(s);
+    });
+  }
+  async function extractIdNumbers(dataUrl) {
+    const T = await loadTesseract();
+    const run = T.recognize(dataUrl, 'eng');
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('OCR timeout')), 90000));
+    const { data } = await Promise.race([run, timeout]);
+    const text = data.text || '';
+    const matches = [...text.matchAll(/(?<!\d)(\d{4})\s*(\d{4})\s*(\d{4})(?!\d)/g)].map(m => m[1] + m[2] + m[3]);
+    return { text, candidates: matches };
+  }
+
+  function applyScoring(spec) {
+    const r = spec.stageResults;
+    let risk = 3;
+    const signals = [];
+    if (r.aadhaarFound && !r.aadhaarValid) {
+      risk += 60;
+      signals.push({ code: 'AADHAAR_CHECKSUM_FAIL', title: 'Aadhaar Number Checksum Failed', severity: 'HIGH', detail: 'The 12-digit number read from the card does not satisfy the Verhoeff checksum. This can also be an OCR misread - re-upload a sharper image.' });
+    }
+    if (r.elaFlag) {
+      risk += 20;
+      signals.push({ code: 'ELA_NON_UNIFORM', title: 'Non-uniform Compression Levels', severity: 'MEDIUM', detail: 'Parts of the image recompress very differently from the rest. This can indicate editing, but photos of cards and re-shared images can also trigger it.' });
+    }
+    if (r.lowRes) {
+      risk += 10;
+      signals.push({ code: 'LOW_RESOLUTION', title: 'Low Resolution / Blurry Image', severity: 'MEDIUM', detail: 'The image is too small or blurry to inspect fine print reliably. Upload a sharper scan.' });
+    }
+    spec.fraudSignals = signals;
+    spec.riskScore = Math.min(99, risk);
+    spec.riskCategory = spec.riskScore > 70 ? 'CRITICAL' : spec.riskScore > 45 ? 'HIGH' : spec.riskScore > 20 ? 'MEDIUM' : 'LOW';
+    spec.recommendedAction = spec.riskScore > 70 ? 'REJECT' : spec.riskScore > 20 ? 'REVIEW' : 'PASS';
+  }
+
+  async function analyzeUpload(spec, dataUrl) {
+    const r = spec.stageResults;
+    try {
+      const img = await loadImage(dataUrl);
+      const small = drawScaled(img, 900);
+      r.lowRes = img.naturalWidth < 500 || sharpnessScore(small) < 25;
+      r.classified = img.naturalWidth >= 300 && img.naturalHeight >= 200;
+      try {
+        const ela = await elaAnalysis(small);
+        r.elaFlag = ela.outlierRatio > 0.25;
+      } catch (e) { r.elaFlag = false; }
+    } catch (e) {
+      r.classified = false;
+    }
+    applyScoring(spec);
+    renderVerdictDisplay();
+
+    // OCR + Aadhaar checksum (slower, runs in the background)
+    try {
+      const { candidates } = await extractIdNumbers(dataUrl);
+      const valid = candidates.find(isValidAadhaarNumber);
+      if (valid) {
+        r.aadhaarFound = true; r.aadhaarValid = true;
+        spec.documentNumber = valid.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3');
+        spec.docType = 'AADHAAR_CARD';
+      } else if (candidates.length) {
+        r.aadhaarFound = true; r.aadhaarValid = false;
+        spec.documentNumber = candidates[0].replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3');
+      } else {
+        r.aadhaarFound = false;
+      }
+    } catch (e) {
+      r.aadhaarFound = false;
+    }
+    spec.mrz = {
+      line1: r.aadhaarFound ? 'N/A - Aadhaar cards have no MRZ' : 'N/A - no MRZ detected',
+      line2: r.aadhaarFound ? 'Verified with Verhoeff checksum on the 12-digit number instead' : '',
+      docNumberLabel: r.aadhaarFound ? (r.aadhaarValid ? 'PASS (Verhoeff)' : 'CHECKSUM FAIL (Verhoeff)') : 'N/A',
+      docNumberValid: !r.aadhaarFound || r.aadhaarValid,
+      dobValid: true, expiryValid: true,
+      compositeValid: !r.aadhaarFound || r.aadhaarValid
+    };
+    applyScoring(spec);
+    spec.analysisPromise = null;
+    renderMRZDisplay();
+    renderVerdictDisplay();
+    renderQueueTable();
+  }
+
   function handleUploadedFile(file) {
     const reader = new FileReader();
     reader.onload = function (e) {
@@ -811,53 +1029,43 @@
         </div>
       `;
 
-      // Mock AI detection on custom upload
+      const hasSelfie = !!state.customSelfie;
       const customSpec = {
         id: `UPLOAD-${Date.now().toString().slice(-4)}`,
         name: `Uploaded Document: ${file.name}`,
         docType: "USER_CUSTOM_ID",
         holderName: "CUSTOM SUBJECT",
         nationality: "DETECTED REGION",
-        documentNumber: "ID-" + Math.floor(10000000 + Math.random() * 90000000),
-        dob: "1990-01-01",
-        sex: "U",
-        issueDate: "2020-01-01",
-        expiryDate: "2030-01-01",
-        riskCategory: "HIGH",
-        riskScore: 68,
-        recommendedAction: "REVIEW",
-        fraudSignals: [
-          { code: "CUSTOM_UPLOAD_HEURISTIC", title: "Manual Inspection Flagged", severity: "HIGH", detail: "File submitted via ad-hoc channel. Micro-security Guilloche vector analysis inconclusive." },
-          { code: "METADATA_TIMESTAMP", title: "EXIF Editing Software Trace", severity: "MEDIUM", detail: "Metadata indicates Adobe Photoshop / GIMP re-encoding header detected." }
-        ],
+        documentNumber: "PENDING OCR",
+        dob: "-", sex: "U", issueDate: "-", expiryDate: "-",
+        riskCategory: "LOW",
+        riskScore: 3,
+        recommendedAction: "PASS",
+        fraudSignals: [],
+        stageResults: { classified: true, lowRes: false, elaFlag: false, aadhaarFound: false, aadhaarValid: false, hasSelfie },
         mrz: {
-          line1: "P<USACUSTOM<<SUBJECT<<<<<<<<<<<<<<<<<<<<<<<<",
-          line2: "9988776654USA9001015U3001012<<<<<<<<<<<<<<02",
-          docNumberValid: true,
-          dobValid: true,
-          expiryValid: true,
-          compositeValid: true
+          line1: 'Analyzing...', line2: '',
+          docNumberLabel: 'PENDING', docNumberValid: true, dobValid: true, expiryValid: true, compositeValid: true
         },
         biometrics: {
-          similarity: 72.1,
-          livenessScore: 65.4,
-          deepfakeProbability: 38.0,
-          verdict: "MANUAL_REVIEW_REQUIRED",
-          details: "Biometric distance within acceptable margin, but requires manual forensic sign-off."
+          similarity: null,
+          livenessScore: null,
+          deepfakeProbability: null,
+          verdict: "N/A - NOT EVALUATED",
+          details: "Face matching and liveness need a live selfie and a face model. These stages are excluded from the score for document-only uploads."
         },
-        tamperZones: [
-          { x: 30, y: 30, width: 40, height: 40, label: "Uploaded Image Forensic ROI", type: "WARNING" }
-        ],
+        tamperZones: [],
         generateDocumentSvg: () => state.customDocument,
         generateSelfieSvg: window.ID_SPECIMENS[0].generateSelfieSvg
       };
 
       state.currentSpecimen = customSpec;
+      customSpec.analysisPromise = analyzeUpload(customSpec, result);
       renderDocumentDisplay();
       renderBiometricsDisplay();
       renderMRZDisplay();
       renderVerdictDisplay();
-      showToast(`Analyzed uploaded file: ${file.name}`, 'info');
+      showToast(`Analyzing uploaded file: ${file.name}`, 'info');
     };
     reader.readAsDataURL(file);
   }
